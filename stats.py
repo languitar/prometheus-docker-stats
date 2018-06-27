@@ -10,25 +10,16 @@ import time
 from docker import Client
 import six
 
-REFRESH_INTERVAL = os.environ.get('REFRESH_INTERVAL', 60)
-CONTAINER_REFRESH_INTERVAL = os.environ.get('CONTAINER_REFRESH_INTERVAL', 120)
-
 DOCKER_CLIENT = Client(
     base_url=os.environ.get('DOCKER_CLIENT_URL', 'unix://var/run/docker.sock'))
 
-METRICS = None
 
-
-def update_metrics():
-    stats, update_ts = update_container_stats()
-    while True:
-        if update_ts <= time.time():
-            stats, update_ts = update_container_stats(stats_dict=stats)
-        metrics = {}
-        for container_name, container_stats in six.iteritems(stats):
-            metrics[str(container_name)] = json.loads(container_stats.next())
-        parsed_metrics = parse_api_metrics(metrics)
-        yield parsed_metrics
+def get_metrics():
+    stats = get_container_stats()
+    metrics = {}
+    for container_name, container_stats in six.iteritems(stats):
+        metrics[str(container_name)] = json.loads(container_stats.next())
+    return parse_api_metrics(metrics)
 
 
 def parse_api_metrics(m):
@@ -68,22 +59,28 @@ def parse_api_metrics(m):
             for metric_name, metric_value in six.iteritems(
                             interface_stats or {}):
                 lines.append(
-                    make_line('networks_%s_%s' % (stat_name, metric_name),
-                              container, metric_value))
+                    make_line('networks_%s' % metric_name,
+                              container, metric_value,
+                              {'interface': stat_name}))
     lines.sort()
     string_buffer = "\n".join(lines)
     string_buffer += "\n"
     return string_buffer
 
 
-def make_line(metric_name, container, metric):
+def make_line(metric_name, container, metric, tags=None):
+    real_tags = {
+        'container': container,
+    }
+    if tags:
+        real_tags.update(tags)
+    tag_line = ','.join(['%s="%s"' % (k, v) for k, v in real_tags.iteritems()])
     metric_name = metric_name.replace('.', '_').replace('-', '_').lower()
-    return str('docker_stats_%s{container="%s"} %s' % (metric_name, container,
-                                                       int(metric)))
+    return str('docker_stats_%s{%s} %s' % (metric_name, tag_line, int(metric)))
 
 
-def update_container_stats(stats_dict=None):
-    stats_dict = stats_dict or {}
+def get_container_stats():
+    stats_dict = {}
     running_containers = DOCKER_CLIENT.containers()
     for container in running_containers:
         container_name = container['Names'][0].lstrip('/')
@@ -94,12 +91,7 @@ def update_container_stats(stats_dict=None):
                         container=container['Id'], stream=True)
                 }
             )
-    container_names = [container['Names'][0].lstrip('/')
-                       for container in running_containers]
-    for container_name, _ in six.iteritems(dict(stats_dict)):
-        if container_name not in container_names:
-            stats_dict.pop(container_name)
-    return stats_dict, time.time() + CONTAINER_REFRESH_INTERVAL
+    return stats_dict
 
 
 def parse_line_value(default_k, k, v, container):
@@ -139,18 +131,13 @@ class MetricsHandler(BaseHTTPRequestHandler):
             return
 
         try:
-            global METRICS
-
-            if not METRICS:
-                METRICS = update_metrics()
-            metrics = METRICS.next()
+            metrics = get_metrics()
 
             self._set_headers()
             self.wfile.write(metrics)
         except Exception, e:
-            self.send_response(500)
-            self.end_headers()
-            self.wfile.write(str(e))
+            import traceback
+            self.send_error(500, str(e) + '\n\n' + traceback.format_exc())
 
     def do_HEAD(self):
         self._set_headers()
