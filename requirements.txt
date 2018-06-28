@@ -1,2 +1,2 @@
 six
-docker-py
+docker

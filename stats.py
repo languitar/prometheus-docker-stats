@@ -7,11 +7,10 @@ import re
 import sys
 import time
 
-from docker import Client
+import docker
 import six
 
-DOCKER_CLIENT = Client(
-    base_url=os.environ.get('DOCKER_CLIENT_URL', 'unix://var/run/docker.sock'))
+DOCKER_CLIENT = docker.from_env()
 
 
 def get_metrics():
@@ -81,14 +80,13 @@ def make_line(metric_name, container, metric, tags=None):
 
 def get_container_stats():
     stats_dict = {}
-    running_containers = DOCKER_CLIENT.containers()
+    running_containers = DOCKER_CLIENT.containers.list()
     for container in running_containers:
-        container_name = container['Names'][0].lstrip('/')
+        container_name = container.name.lstrip('/')
         if not stats_dict.get(container_name):
             stats_dict.update(
                 {
-                    container_name: DOCKER_CLIENT.stats(
-                        container=container['Id'], stream=True)
+                    container_name: container.stats(stream=True)
                 }
             )
     return stats_dict
