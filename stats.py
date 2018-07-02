@@ -11,6 +11,7 @@ import docker
 import six
 
 DOCKER_CLIENT = docker.from_env()
+PREFIX = 'docker'
 
 
 def get_metrics():
@@ -75,7 +76,8 @@ def make_line(metric_name, container, metric, tags=None):
         real_tags.update(tags)
     tag_line = ','.join(['%s="%s"' % (k, v) for k, v in real_tags.iteritems()])
     metric_name = metric_name.replace('.', '_').replace('-', '_').lower()
-    return str('docker_stats_%s{%s} %s' % (metric_name, tag_line, int(metric)))
+    return str('%s_stats_%s{%s} %s' % (PREFIX, metric_name,
+                                       tag_line, int(metric)))
 
 
 def get_container_stats():
@@ -148,7 +150,9 @@ def run(server_class=HTTPServer, handler_class=MetricsHandler, port=80):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) == 2:
+    if len(sys.argv) >= 3:
+        PREFIX = sys.argv[2]
+    if len(sys.argv) >= 2:
         run(port=int(sys.argv[1]))
     else:
         run()
